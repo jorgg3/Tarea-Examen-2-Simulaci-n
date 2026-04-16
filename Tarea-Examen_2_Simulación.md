@@ -518,3 +518,11 @@ grafico_combinado
 ```
 
 ![](Tarea-Examen_2_Simulación_files/figure-gfm/unnamed-chunk-17-1.png)<!-- -->
+
+## Referencias
+
+- Box, G. E., y Muller, M. E. (1958). A note on the generation of random
+  normal deviates. *The Annals of Mathematical Statistics*, 29(2),
+  610-611.
+- Robert, C. P., y Casella, G. (1999). *Monte Carlo Statistical
+  Methods*, Vol. 2. Springer.

@@ -392,4 +392,9 @@ grafico_combinado
 ```
 
 
+## Referencias
+
+* Box, G. E., y Muller, M. E. (1958). A note on the generation of random normal deviates. *The Annals of Mathematical Statistics*, 29(2), 610-611.
+* Robert, C. P., y Casella, G. (1999). *Monte Carlo Statistical Methods*, Vol. 2. Springer.
+
 
