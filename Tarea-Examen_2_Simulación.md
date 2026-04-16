@@ -3,6 +3,16 @@ Tarea-Examen 2: Simulación Estocástica
 José Jorge Martínez de la Cruz
 2026-04-15
 
+``` r
+library(quantmod)
+library(rugarch)
+library(MASS)
+library(ggplot2)
+library(mvtnorm)
+library(patchwork)
+set.seed(236)
+```
+
 ## Problema 1
 
 Utilizando el método de muestreo por importancia para el método de media
@@ -69,6 +79,81 @@ $$\int_{0}^{1} \frac{1}{1+x^2} dx =  \arctan(x) | _{0}^{1} = \arctan(1) - \arcta
 Los resultados obtenidos después de aplicar el método de muestreo por
 importancia se muestran a continuación:
 
+``` r
+# definición de los parametros
+n <- 10000 #Numero de simulaciones
+m <- 10 #Numero de intervalos
+delta <- 1 / m #Longitud de cada intervalo
+
+# definimos los límites de los 10 intervalos en [0,1]
+limites <- seq(0, 1, length.out = m + 1)
+
+# tomaremos punto medio por simplicidad de cada intervalo para evaluar la función
+mean_p <- (limites[-1] + limites[-(m + 1)]) / 2
+
+# función a integrar h(x)
+h <- function(x) {
+  1 / (1 + x^2)
+}
+
+# f(x) constante 
+f_x <- 1
+```
+
+``` r
+# evaluamos h(x) en los puntos medios
+g_i <- h(mean_p)
+
+# Constante de normalización C = suma(g_i * ancho)
+C_norm <- sum(g_i * delta)
+
+# probabilidad de caer en cada intervalo i
+
+p_i <- (g_i * delta) / C_norm
+
+#  alturas reales de la densidad g_bar escalonada
+g_bar_alturas <- g_i / C_norm
+```
+
+``` r
+intervalos_simulados <- sample(1:m, size = n, replace = TRUE, prob = p_i)
+
+# simulamos uniformemente dentro del intervalo elegido
+x_simulados <- runif(n, 
+                     min = limites[intervalos_simulados], 
+                     max = limites[intervalos_simulados + 1])
+
+# el valor de g_bar evaluado en los puntos simulados
+g_bar_evaluado <- g_bar_alturas[intervalos_simulados]
+
+#  pesos w(x) = f(x) / g(x)
+w_x <- f_x / g_bar_evaluado
+
+#  muestreo por importancia: media de w(x) * h(x)
+estimacion <- mean(w_x * h(x_simulados))
+
+# valor teórico para comparar (integral de 1/(1+x^2) de 0 a 1 es arctan(1) = pi/4)
+valor_teorico <- pi / 4
+```
+
+``` r
+cat("Estimación obtenida:     ", estimacion, "\n")
+```
+
+    ## Estimación obtenida:      0.7857168
+
+``` r
+cat("Valor analítico (pi/4):  ", valor_teorico, "\n")
+```
+
+    ## Valor analítico (pi/4):   0.7853982
+
+``` r
+cat("Error absoluto:          ", abs(estimacion - valor_teorico), "\n")
+```
+
+    ## Error absoluto:           0.0003186016
+
 | Métrica                           |    Valor     |
 |:----------------------------------|:------------:|
 | Estimación obtenida               |  0.7853982   |
@@ -127,7 +212,52 @@ Para implementar esto en R, podemos usar la función `MASS::mvrnorm` para
 generar muestras de la distribución bivariada y luego calcular la
 proporción de vectores que caen dentro del cuadrado unitario. Además
 incluiremos el paquete `mvtnorm` para calcular la probabilidad teórica
-real y poder validar la precisión de tu estimador.
+real y poder validar la precisión del estimador.
+
+``` r
+#parametros
+n <- 100000
+mu <- c(0, 0)
+sigma <- matrix(c(1,   0.5, 
+                  0.5, 1), 
+                nrow = 2, ncol = 2)
+
+# muestra bivariada
+muestras <- mvrnorm(n = n, mu = mu, Sigma = sigma)
+
+# le ponemos nombres a las columnas 
+colnames(muestras) <- c("X1", "X2")
+
+# casos de éxito, función indicadora
+en_cuadrado <- (muestras[, "X1"] >= 0 & muestras[, "X1"] <= 1) & 
+               (muestras[, "X2"] >= 0 & muestras[, "X2"] <= 1)
+
+# estimación de la probabilidad
+prob_estimada <- mean(en_cuadrado)
+```
+
+``` r
+# validación con la función de distribución acumulada teórica
+# pmvnorm calcula la integral definida de la normal multivariada
+prob_teorica <- pmvnorm(lower = c(0, 0), upper = c(1, 1), mean = mu, sigma = sigma)
+
+#  resultados
+cat("Estimación Montecarlo (N =", n, "):", prob_estimada, "\n")
+```
+
+    ## Estimación Montecarlo (N = 1e+05 ): 0.142
+
+``` r
+cat("Valor teórico (mvtnorm):                  ", prob_teorica, "\n")
+```
+
+    ## Valor teórico (mvtnorm):                   0.141051
+
+``` r
+cat("Error absoluto:                           ", abs(prob_estimada - prob_teorica), "\n")
+```
+
+    ## Error absoluto:                            0.0009489851
 
 Una vez realizado el algoritmo, obtenemos los siguientes resultados:
 
@@ -142,3 +272,249 @@ método de Montecarlo es bastante cercana al valor teórico calculado con
 la función `pmvnorm`, lo que valida la precisión de nuestro estimador.
 El error absoluto es pequeño, lo que indica que el método de simulación
 ha sido efectivo para aproximar la probabilidad deseada.
+
+## Problema 3
+
+Considerando la Tarea $1$, baje una serie de $200$ precios diarios de
+otro activo. Calcule la correlación entre ambas series. Después calcule
+la correlación entre los cambios porcentuales (rendimientos discretos).
+A ambos rendimientos discretos ajústeles un modelo
+ARMA$(1,1)$-$GARCH(1,1)$ y calcule la correlación de los residuales de
+ambos. Por último ajuste una distribución normal a cada serie de
+residuales y diga si el ajuste es bueno
+
+### Solución:
+
+Para este ejercicio, vamos a analizar la relación entre dos series de
+tiempo financieras: **META** (de la tarea 1) y **AAPL** (nuevo activo).
+El objetivo es observar cómo evoluciona la dependencia entre los activos
+conforme eliminamos la autocorrelación y la heterocedasticidad mediante
+modelos de series de tiempo financieras:
+
+Haremos el cálculo de los cambios porcentuales como:
+$$R_t = \frac{P_t - P_{t-1}}{P_{t-1}}$$ Para ajustar un modelo con media
+condicional ($\mu_t$) y la varianza condicional ($\sigma_t^2$),
+ajustamos un modelo ARMA(1,1)-GARCH(1,1) a cada serie de rendimientos,
+el cual se puede expresar de la siguiente manera:
+
+$$R_t = \mu + \phi R_{t-1} + \theta \epsilon_{t-1} + \epsilon_t$$
+$$\sigma_t^2 = \omega + \alpha \epsilon_{t-1}^2 + \beta \sigma_{t-1}^2$$
+Calcularemos los residuales como $z_t = \epsilon_t / \sigma_t$, estos
+residuales hacen el papel de ruido blanco y analizaremos si siguen una
+distribución normal si el ajuste es adecuado.
+
+``` r
+# vamos a descargar datos de META/Facebook (META) y Apple (AAPL) para el mismo periodo de tiempo (200 días)
+symbols <- c("META", "AAPL")
+getSymbols(symbols, from = Sys.Date() - 350, to = Sys.Date(), periodicity = "daily")
+```
+
+    ## [1] "META" "AAPL"
+
+``` r
+# últimos 200 precios de cierre
+precios_meta <- as.numeric(tail(Cl(META), 200))
+precios_aapl <- as.numeric(tail(Cl(AAPL), 200))
+```
+
+Una vez descargadas ambas series de tiempo, vamos a mostrar como se ven
+gráficamente para tener una idea de su comportamiento:
+
+``` r
+# graficamos ambas series de precios usando ggplot2
+
+precios_df <- data.frame(
+  Fecha = index(tail(META, 200)),
+  META = precios_meta,
+  AAPL = precios_aapl
+)
+
+ggplot(precios_df, aes(x = Fecha)) +
+  
+  geom_line(aes(y = META, color = "META")) +
+  
+  geom_line(aes(y = AAPL, color = "AAPL")) +
+  
+  labs(title = "Precios de META y AAPL", y = "Precio de Cierre") +
+  
+  scale_color_manual(values = c("blue", "red")) +
+  
+  theme_minimal() +
+  theme(legend.title = element_blank())
+```
+
+![](Tarea-Examen_2_Simulación_files/figure-gfm/unnamed-chunk-9-1.png)<!-- -->
+
+``` r
+# correlación entre precios
+cor_precios <- cor(precios_meta, precios_aapl)
+```
+
+La correlación entre los precios de ambas series es de aproximadamente
+-0.5516, lo que indica una relación negativa moderada entre los precios
+de META y AAPL. Sin embargo, es importante tener en cuenta que la
+correlación entre precios no siempre refleja la verdadera relación entre
+los activos, ya que puede estar influenciada por tendencias comunes o
+factores externos. Por eso, resulta importante analizar también la
+correlación entre los rendimientos discretos para obtener una visión más
+precisa de la relación entre ambos activos.
+
+``` r
+# calculamos los rendimientos discretos
+rend_meta <- diff(precios_meta) / head(precios_meta, -1)
+rend_aapl <- diff(precios_aapl) / head(precios_aapl, -1)
+
+corr_rendimientos <- cor(rend_meta, rend_aapl)
+```
+
+La correlación entre los rendimientos discretos de META y AAPL es de
+aproximadamente 0.2134, lo que indica una relación positiva pequeña
+entre los rendimientos de ambos activos. Esto sugiere que, en general,
+cuando el rendimiento de META aumenta, el rendimiento de AAPL tiende a
+aumentar, aunque no de manera precisa. De la misma manera, graficaremos
+la serie de ambos rendimientos
+
+``` r
+# graficamos ambas series de rendimientos usando ggplot2
+rend_df <- data.frame(
+  Fecha = index(tail(META, 199)),
+  META = rend_meta,
+  AAPL = rend_aapl
+)
+
+ggplot(rend_df, aes(x = Fecha)) +
+  
+  geom_line(aes(y = META, color = "META")) +
+  
+  geom_line(aes(y = AAPL, color = "AAPL")) +
+  
+  labs(title = "Rendimientos de META y AAPL", y = "Rendimiento Discreto") +
+  
+  scale_color_manual(values = c("blue", "red")) +
+  
+  theme_minimal() +
+  theme(legend.title = element_blank())
+```
+
+![](Tarea-Examen_2_Simulación_files/figure-gfm/unnamed-chunk-12-1.png)<!-- -->
+
+Procedemos a ajustar un modelo ARMA(1,1)-GARCH(1,1) a cada serie de
+rendimientos para eliminar la autocorrelación y la heterocedasticidad, y
+luego analizaremos la correlación entre los residuales estandarizados de
+ambos modelos.
+
+``` r
+# ajustamos modelos ARMA(1,1)-GARCH(1,1) a cada serie de rendimientos
+
+# especificación del modelo
+spec <- ugarchspec(
+  variance.model = list(model = "sGARCH", garchOrder = c(1, 1)),
+  mean.model = list(armaOrder = c(1, 1), include.mean = TRUE),
+  distribution.model = "norm"
+)
+
+# Ajuste para META
+fit_meta <- ugarchfit(spec = spec, data = rend_meta)
+# Ajuste para AAPL
+fit_aapl <- ugarchfit(spec = spec, data = rend_aapl)
+```
+
+``` r
+# residuales estandarizados y su correlación
+res_meta <- as.numeric(residuals(fit_meta, standardize = TRUE))
+res_aapl <- as.numeric(residuals(fit_aapl, standardize = TRUE))
+
+corr_residuales <- cor(res_meta, res_aapl)
+```
+
+La correlación entre los residuales estandarizados de ambos modelos es
+de aproximadamente 0.2339, lo que indica una relación positiva pequeña
+entre los residuales de ambos activos. Esto sugiere que, después de
+eliminar la autocorrelación y la heterocedasticidad, los movimientos
+inesperados en los rendimientos de META y AAPL siguen mostrando una
+relación positiva.
+
+``` r
+# graficamos ambas series de residuales estandarizados usando ggplot2
+res_df <- data.frame(
+  Fecha = index(tail(META, 199)),
+  META = res_meta,
+  AAPL = res_aapl
+)
+
+ggplot(res_df, aes(x = Fecha)) +
+  
+  geom_line(aes(y = META, color = "META")) +
+  
+  geom_line(aes(y = AAPL, color = "AAPL")) +
+  
+  labs(title = "Residuales Estandarizados de META y AAPL", y = "Residuales Estandarizados") +
+  
+  scale_color_manual(values = c("blue", "red")) +
+  
+  theme_minimal() +
+  theme(legend.title = element_blank())
+```
+
+![](Tarea-Examen_2_Simulación_files/figure-gfm/unnamed-chunk-15-1.png)<!-- -->
+
+``` r
+# normalidad de los residuales
+shapiro_meta <- shapiro.test(res_meta)
+shapiro_aapl <- shapiro.test(res_aapl)
+
+cat("Shapiro-Wilk Test para META: W =", round(shapiro_meta$statistic, 4), 
+    ", p-value =", round(shapiro_meta$p.value, 4), "\n")
+```
+
+    ## Shapiro-Wilk Test para META: W = 0.8756 , p-value = 0
+
+``` r
+cat("Shapiro-Wilk Test para AAPL: W =", round(shapiro_aapl$statistic, 4), 
+    ", p-value =", round(shapiro_aapl$p.value, 4), "\n")
+```
+
+    ## Shapiro-Wilk Test para AAPL: W = 0.9563 , p-value = 0
+
+Los resultados del test de Shapiro-Wilk para los residuales
+estandarizados de META y AAPL son los siguientes:
+
+| Activo | p-value |
+|:-------|:-------:|
+| META   | 0.0000  |
+| AAPL   | 0.0000  |
+
+Esto indica que los residuales estandarizados de ambos modelos no siguen
+una distribución normal, ya que los p-values son menores a cualquier
+nivel de significancia comúnmente utilizado (por ejemplo, 0.05). Por lo
+tanto, el ajuste de la distribución normal a los residuales no es
+adecuado para ninguna de las dos series, lo que sugiere que podrían
+seguir una distribución diferente o que existen outliers o patrones no
+capturados por el modelo ARMA-GARCH ajustado. Esto es común en datos
+financieros, donde los residuales a menudo exhiben colas pesadas o
+asimetrías que no se ajustan bien a la normalidad.
+
+``` r
+# histogramas de los residuales estandarizados
+p1 <- ggplot(res_df, aes(x = META)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "blue", alpha = 0.5) +
+  geom_density(color = "blue", size = 1) +
+  labs(title = "Residuales: META", 
+       x = "Residuales Estandarizados", 
+       y = "Densidad") +
+  theme_minimal()
+
+p2 <- ggplot(res_df, aes(x = AAPL)) +
+  geom_histogram(aes(y = ..density..), bins = 30, fill = "red", alpha = 0.5) +
+  geom_density(color = "red", size = 1) +
+  labs(title = "Residuales: AAPL", 
+       x = "Residuales Estandarizados", 
+       y = "Densidad") +
+  theme_minimal()
+
+grafico_combinado <- p1 | p2
+
+grafico_combinado
+```
+
+![](Tarea-Examen_2_Simulación_files/figure-gfm/unnamed-chunk-17-1.png)<!-- -->
